@@ -1,0 +1,217 @@
+import numpy as np
+import pandas as pd
+import sklearn as sl
+import matplotlib.pyplot as plt
+import time
+import tensorflow as tf
+import seaborn as sns
+import plotly.express as px
+
+
+from datetime import datetime,timedelta
+from sklearn.metrics import mean_squared_error
+from scipy.optimize import curve_fit
+from scipy.optimize import fsolve
+%matplotlib inline
+
+from math import log10
+
+data = pd.read_csv('https://covid.ourworldindata.org/data/owid-covid-data.csv')
+array = ["Canada", "United States", "Iran", "India", "Mexico", "Italy", "United Kingdom", "South Korea", "South Africa", "Brazil", "Russia", "China"]
+df = data.loc[data['location'].isin(array)]
+
+total_Case=df[['location','total_cases']]
+
+total_case_today=total_Case.loc[(df.date == '2020-06-30')]
+sorted_data=total_case_today.sort_values(by=['total_cases'])
+sorted_data['total_cases']= round(sorted_data['total_cases']/1000000,2)
+
+sorted_data
+
+# plotting a bar chart 
+def colors_from_values(values, palette_name):
+    # normalize the values to range [0, 1]
+    normalized = (values - min(values)) / (max(values) - min(values))
+    # convert to indices
+    indices = np.round(normalized * (len(values) - 1)).astype(np.int32)
+    # use the indices to get the colors
+    palette = sns.color_palette(palette_name, len(values))
+    return np.array(palette).take(indices, axis=0)
+
+
+x = sorted_data['location']
+y = sorted_data['total_cases']
+total_graph=sns.barplot(y, x,palette=colors_from_values(y, "YlOrRd"))
+total_graph.set(xlabel='Total confirmed cases (Millions)',ylabel='Country')
+
+
+from matplotlib import pyplot as plt
+import numpy as np
+
+def show_values_on_bars(axs, h_v="v", space=0.4):
+    def _show_on_single_plot(ax):
+        if h_v == "v":
+            for p in ax.patches:
+                _x = p.get_x() + p.get_width() / 2
+                _y = p.get_y() + p.get_height()
+                value = int(p.get_height())
+                ax.text(_x, _y, value, ha="center") 
+        elif h_v == "h":
+            for p in ax.patches:
+                _x = p.get_x() + p.get_width() + float(space)
+                _y = p.get_y() + p.get_height()
+                value = p.get_width()
+                ax.text(_x, _y, value, ha="left")
+
+    if isinstance(axs, np.ndarray):
+        for idx, ax in np.ndenumerate(axs):
+            _show_on_single_plot(ax)
+    else:
+        _show_on_single_plot(axs)
+
+show_values_on_bars(total_graph,'h',0)
+
+#pie chart for total confirmed case by country
+fig = px.pie(sorted_data, values='total_cases', names='location')
+fig.update_traces(textposition='inside')
+fig.show()
+
+#scatter on map
+import plotly.express as px
+map_data = {'location': ["Canada", "United States", "Iran", "India", "Mexico", "Italy", "United Kingdom", "South Korea", "South Africa", "Brazil", "Russia", "China"], 
+        'iso code': ["CAN","USA","IRN","IND","MEX","ITA","GBR","PRK","ZAF","BRA","RUS","CHN"]}
+map_df= pd.DataFrame(map_data)
+
+df_map = pd.merge(sorted_data, map_df, how='left', on = 'location')
+
+fig = px.choropleth(df_map, locations="iso code",
+                    color="total_cases", 
+                    hover_name="location", 
+                    color_continuous_scale=px.colors.sequential.Pinkyl)
+fig.show()
+
+# population density and confirmed case
+import plotly.express as px
+fig = px.scatter(df.loc[df['date']=="2020-06-30"], x="population_density", y="total_cases", size="total_cases", color="location",
+           hover_name="location", log_x=True, size_max=60)
+fig.show()
+
+beds=df[['location','hospital_beds_per_thousand']]
+
+beds_pt=pd.pivot_table(beds,index=['location'],aggfunc=np.mean).reset_index()
+
+total_deaths=df[['location','total_deaths','population']]
+today = time.strftime("%Y-%m-%d")
+total_deaths_today=total_deaths.loc[(df.date == "2020-06-30")]
+
+total_deaths_today['total_deaths']= total_deaths_today['total_deaths']/total_deaths_today['population']*100000
+
+deaths_beds = pd.merge(beds_pt,  
+                     total_deaths_today,  
+                     on ='location',  
+                     how ='left') 
+
+deaths_beds.drop(['population'],axis = 1, inplace = True)
+
+deaths_beds
+
+import plotly.graph_objects as go
+import plotly.express as px
+
+fig = go.Figure()
+
+fig = go.Figure(data=go.Scatter(
+    x=deaths_beds['hospital_beds_per_thousand'],
+    y=deaths_beds['total_deaths'],
+    mode='markers',
+    text = deaths_beds['location'],
+     marker_color=deaths_beds['hospital_beds_per_thousand'],
+     marker=dict(
+        size=16,
+        color=np.random.randn(12), #set color equal to a variable
+       # colorscale='Viridis', # one of plotly colorscales
+        showscale=True      
+)))
+
+fig.update_layout(
+    title="Relationship between Hospital beds availability and deaths",
+    xaxis_title="hospital beds per thousand",
+    yaxis_title="Number of Deaths per thousand")
+
+
+fig.show()
+
+#using exponential model to do predictions
+df_log=df[["date","location","total_cases"]]
+df_log.head()
+#df_log['date']=date.map(lambda x: (datetime.strptime(x,FMT)-datetime.strptime("2020-01-01",FMT)).days)
+
+
+def exponential_model(x,a,b,c):     return a*np.exp(b*(x-c))
+FMT ='%Y-%m-%d'
+date =df_log['date']
+
+df_log['date']= date.map(lambda x : (datetime.strptime(x, FMT) -datetime.strptime("2020-01-01", FMT)).days  )
+
+
+lockdown = {'location': ["Canada", "United States", "Iran", "India", "Mexico", "Italy", "United Kingdom", "South Korea", "South Africa", "Brazil", "Russia", "China"], 
+        'days': [75,90,73,84,81,68,82,61,85,76,89,40]}
+lockdown_df= pd.DataFrame(lockdown)
+
+df_log = pd.merge(df_log, lockdown_df, how='left', on = 'location')
+df_log = df_log.dropna()
+
+def logistic_model(x,a,b,c):
+    return c/(1+np.exp(-(x-b)/a))
+    
+array = ["Canada", "United States", "Iran", "India", "Mexico", "Italy", "United Kingdom", "South Korea", "South Africa", "Brazil", "Russia", "China"]
+fit_lo={}
+fit_ex={}
+k=0
+for i in array:
+  df_ctryy=df_log.loc[(df_log["location"]==i)]
+  df_log1=df_ctryy[df_log["date"]<df_log["days"]]
+  df_ctry=df_log1.loc[(df_log1["location"]==i)]
+  df_ctryyy=df_log.loc[(df_log["location"]==i)]
+
+  x=list(df_ctry['date'])
+  y=list(df_ctry['total_cases'])
+  xx=list(df_log.loc[(df_log["location"]==i)]['date'])
+  yy=list(df_log.loc[(df_log["location"]==i)]['total_cases'])
+  
+
+  fit_lo[k]=curve_fit(logistic_model,x,y,maxfev=100000)
+
+  fit_ex[k] =curve_fit(exponential_model,x,y,maxfev=100000)
+
+
+
+  pred_x= list(range(max(x),150))
+  pred_xx= list(range(max(x),max(x)+20))
+  plt.rcParams['figure.figsize']= [7, 7]
+  plt.rc('font',size=14)
+
+## Realdata
+  plt.scatter(xx,yy,label="Real data",color="firebrick",)
+#Predicted logistic and exponential curve
+  plt.plot(x+pred_x,[logistic_model(m,fit_lo[k][0][0],fit_lo[k][0][1],fit_lo[k][0][2]) for m in x+pred_x], label="logistic model" )
+  plt.plot(x+pred_xx,[exponential_model(m,fit_ex[k][0][0],fit_ex[k][0][1],fit_ex[k][0][2])for m in x+pred_xx], label="Exponential model" )
+#formatting
+  plt.legend()
+  plt.xlabel("Days since 1 January 2020")
+  plt.ylabel("Total number of infected people")
+  plt.title("Comparison between prediction data and measured data for "+str(i))
+  
+
+  plt.show()
+
+  #residual analysis
+  y_pred_logistic=[logistic_model(i,fit_lo[k][0][0],fit_lo[k][0][1],fit_lo[k][0][2])for i in x]
+  y_pred_exp = [exponential_model(i,fit_ex[k][0][0], fit_ex[k][0][1], fit_ex[k][0][2]) for i in  x]
+  print("MSE for logistic model:")
+  print(mean_squared_error(y,y_pred_logistic))
+  print("MSE for Exponential model:")
+  print(mean_squared_error(y,y_pred_exp))
+  
+  k=k+1
+  
